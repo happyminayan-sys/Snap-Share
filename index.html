@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -262,12 +261,14 @@
             mainContent: document.getElementById('main-content')
         };
 
+        // APIキーの有無を確認し、なければ選択ダイアログを開く
         async function ensureApiKey() {
             if (typeof window.aistudio === 'undefined') return true;
             const hasKey = await window.aistudio.hasSelectedApiKey();
             if (!hasKey) {
                 await window.aistudio.openSelectKey();
-                return true; 
+                // ダイアログを開いた後は、ユーザーがキーを選択したとみなして進む（レースコンディション対策）
+                return true;
             }
             return true;
         }
@@ -309,3 +310,155 @@
             if (!file) return;
             const reader = new FileReader();
             reader.onload = (e) => {
+                state.imageSrc = e.target.result;
+                state.timestamp = new Date().toLocaleString('ja-JP');
+                dom.txtComment.value = `${state.timestamp}\n`;
+                state.history = [];
+                state.historyIndex = -1;
+                pushToHistory();
+                state.stage = 'EDIT';
+                updateUI();
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function callGeminiAi() {
+            if (state.isAiGenerating || !state.imageSrc) return;
+            
+            // キーの確認
+            await ensureApiKey();
+            
+            state.isAiGenerating = true;
+            dom.aiStatus.innerText = "生成中...";
+            try {
+                // 毎回インスタンスを生成して最新のAPIキーを使用
+                const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+                const base64Data = state.imageSrc.split(',')[1];
+                const response = await ai.models.generateContent({
+                    model: 'gemini-3-flash-preview',
+                    contents: {
+                        parts: [
+                            { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+                            { text: "写真の一言コメントを日本語で1つ返してください。絵文字1つ可。エモーショナルまたは日常的な雰囲気。解説や装飾は不要です。" }
+                        ]
+                    }
+                });
+                
+                if (response && response.text) {
+                    dom.txtComment.value = `${state.timestamp}\n${response.text.trim()}`;
+                    pushToHistory();
+                } else {
+                    throw new Error("Invalid response");
+                }
+            } catch (err) {
+                console.error(err);
+                if (err.message && err.message.includes("Requested entity was not found")) {
+                    alert("APIキーが無効、またはプロジェクトが見つかりません。再設定してください。");
+                    if (window.aistudio) await window.aistudio.openSelectKey();
+                } else {
+                    alert("AIコメントの生成に失敗しました。APIキーが正しく設定されているか確認してください。\n(ai.google.dev/gemini-api/docs/billing もご確認ください)");
+                }
+            } finally {
+                state.isAiGenerating = false;
+                dom.aiStatus.innerText = "AIにお任せ";
+            }
+        }
+
+        async function generateCard() {
+            const ctx = dom.canvas.getContext('2d');
+            const img = new Image();
+            img.src = state.imageSrc;
+            await new Promise(res => img.onload = res);
+            
+            const canvasWidth = 1080;
+            const padding = 60;
+            const imgH = (img.height / img.width) * canvasWidth;
+            const comment = dom.txtComment.value.trim();
+            
+            if (!comment) {
+                dom.canvas.width = canvasWidth;
+                dom.canvas.height = imgH;
+                ctx.drawImage(img, 0, 0, canvasWidth, imgH);
+            } else {
+                const lines = dom.txtComment.value.split('\n');
+                const footerHeight = 100 + (lines.length * 70) + 60;
+                dom.canvas.width = canvasWidth;
+                dom.canvas.height = imgH + footerHeight;
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, dom.canvas.width, dom.canvas.height);
+                ctx.drawImage(img, 0, 0, canvasWidth, imgH);
+                
+                ctx.fillStyle = '#1e293b';
+                ctx.font = 'bold 44px "Noto Sans JP", sans-serif';
+                let y = imgH + 100;
+                lines.forEach(l => {
+                    ctx.fillText(l, padding, y);
+                    y += 70;
+                });
+            }
+            state.processedImageSrc = dom.canvas.toDataURL('image/png');
+            state.stage = 'PREVIEW';
+            updateUI();
+        }
+
+        // イベント設定
+        dom.btnSelectKey.onclick = async () => {
+            if (window.aistudio) await window.aistudio.openSelectKey();
+            else alert("この環境ではAPIキー選択ダイアログは利用できません。");
+        };
+        dom.btnCamera.onclick = () => dom.cameraInput.click();
+        dom.btnFile.onclick = () => dom.fileInput.click();
+        dom.cameraInput.onchange = (e) => handleFile(e.target.files[0]);
+        dom.fileInput.onchange = (e) => handleFile(e.target.files[0]);
+        dom.btnAiCaption.onclick = callGeminiAi;
+        dom.btnGeneratePreview.onclick = generateCard;
+        dom.btnGlobalBack.onclick = () => { state.stage = 'SELECT'; updateUI(); };
+        dom.btnBackToEdit.onclick = () => { state.stage = 'EDIT'; updateUI(); };
+        dom.btnReset.onclick = () => { state.stage = 'SELECT'; updateUI(); };
+        dom.btnCopy.onclick = async () => {
+            try {
+                const blob = await (await fetch(state.processedImageSrc)).blob();
+                await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+                alert("クリップボードにコピーしました");
+            } catch (e) { alert("コピーに失敗しました"); }
+        };
+        dom.btnShare.onclick = async () => {
+            try {
+                const blob = await (await fetch(state.processedImageSrc)).blob();
+                const file = new File([blob], `photo-${Date.now()}.png`, { type: 'image/png' });
+                if (navigator.share && navigator.canShare({ files: [file] })) {
+                    await navigator.share({ files: [file], title: 'Photo Moments' });
+                } else {
+                    const a = document.createElement('a');
+                    a.href = state.processedImageSrc;
+                    a.download = file.name;
+                    a.click();
+                }
+            } catch (e) { alert("保存・共有に失敗しました"); }
+        };
+        dom.btnUndo.onclick = () => {
+            if(state.historyIndex > 0) {
+                state.historyIndex--;
+                dom.txtComment.value = state.history[state.historyIndex];
+                updateHistoryButtons();
+            }
+        };
+        dom.btnRedo.onclick = () => {
+            if(state.historyIndex < state.history.length - 1) {
+                state.historyIndex++;
+                dom.txtComment.value = state.history[state.historyIndex];
+                updateHistoryButtons();
+            }
+        };
+        dom.btnDelete.onclick = () => { dom.txtComment.value = ""; pushToHistory(); };
+        let t;
+        dom.txtComment.oninput = () => {
+            clearTimeout(t);
+            t = setTimeout(pushToHistory, 500);
+        };
+
+        updateUI();
+    </script>
+</body>
+</html>
