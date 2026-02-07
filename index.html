@@ -18,7 +18,7 @@
         }
         body {
             font-family: 'Inter', 'Noto Sans JP', sans-serif;
-            background-color: #f1f5f9;
+            background-color: #f8fafc;
             color: #1e293b;
             height: var(--app-height);
             margin: 0;
@@ -26,14 +26,14 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            /* タッチデバイスでの不要な挙動を抑制 */
             touch-action: manipulation;
+            -webkit-font-smoothing: antialiased;
         }
         .hidden { display: none !important; }
         
-        /* アニメーションの最適化: 移動量を抑えてGPUで処理 */
+        /* GPU加速アニメーション */
         .fade-in {
-            animation: fadeIn 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            animation: fadeIn 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             will-change: opacity, transform;
             transform: translateZ(0);
         }
@@ -50,39 +50,44 @@
             flex-direction: column;
             background-color: white;
             position: relative;
-            box-shadow: 0 0 40px rgba(0,0,0,0.1);
+            box-shadow: 0 10px 50px rgba(0,0,0,0.1);
             overflow: hidden;
-            transform: translateZ(0); /* レイヤー分離 */
+            isolation: isolate;
+            perspective: 1000px; /* 3Dアクセラレーションの安定化 */
         }
 
-        /* スクロール領域の徹底最適化 */
+        /* スクロール領域の徹底チューニング */
         #main-content {
             flex: 1;
-            overflow-y: auto;
+            overflow-y: auto; 
             overflow-x: hidden;
-            -webkit-overflow-scrolling: touch; /* iOSの慣性スクロール */
-            overscroll-behavior-y: contain; /* 背面のスクロールを防止 */
-            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior-y: contain;
+            scroll-behavior: auto; 
             will-change: transform;
             transform: translateZ(0);
             background-color: #ffffff;
+            contain: content; 
         }
 
-        /* 固定アクションバーの描画負荷を軽減 */
+        header, .fixed-action-bar {
+            transform: translateZ(0);
+            backface-visibility: hidden;
+        }
+
         .fixed-action-bar {
             position: absolute;
             bottom: 0;
             left: 0;
             right: 0;
-            background: rgba(255, 255, 255, 0.9);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-top: 1px solid #e2e8f0;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-top: 1px solid #f1f5f9;
             padding: 1.25rem;
             padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
             z-index: 100;
-            box-shadow: 0 -8px 20px -5px rgba(0, 0, 0, 0.05);
-            transform: translateZ(0); /* スクロール中の再描画を分離 */
+            box-shadow: 0 -10px 30px -10px rgba(0, 0, 0, 0.05);
         }
 
         .toolbar-btn {
@@ -96,15 +101,15 @@
             color: #64748b;
         }
         .toolbar-btn:hover { background-color: #f1f5f9; color: #1e293b; }
-        .toolbar-btn:disabled { opacity: 0.2; cursor: not-allowed; }
+        .toolbar-btn:disabled { opacity: 0.15; cursor: not-allowed; }
 
         .preview-image-box {
-            max-height: 42dvh;
+            max-height: 40dvh;
             width: 100%;
             background-color: #f8fafc;
-            border-radius: 1.25rem;
+            border-radius: 1.5rem;
             overflow: hidden;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #f1f5f9;
             transform: translateZ(0);
         }
 
@@ -114,13 +119,18 @@
 
         textarea::placeholder { color: #cbd5e1; }
         #main-content::-webkit-scrollbar { display: none; }
+        
+        #img-final-result {
+            image-rendering: -webkit-optimize-contrast;
+            image-rendering: high-quality;
+        }
     </style>
 </head>
 <body>
 
     <div id="app">
         <!-- 固定ヘッダー -->
-        <header class="p-4 flex items-center justify-between border-b bg-white z-[110] flex-shrink-0 shadow-sm transform-gpu">
+        <header class="p-4 flex items-center justify-between border-b bg-white/95 backdrop-blur-md z-[110] flex-shrink-0 shadow-sm">
             <div class="flex items-center gap-2">
                 <button id="btn-global-back" class="p-2 hover:bg-slate-100 rounded-full transition-colors hidden">
                     <i data-lucide="arrow-left" class="w-6 h-6 text-slate-600"></i>
@@ -147,27 +157,27 @@
                 <input type="file" id="file-input" accept="image/*" class="hidden">
 
                 <button id="btn-camera" class="w-full p-8 rounded-3xl bg-indigo-50 border-2 border-indigo-100 hover:border-indigo-300 transition-all flex flex-col items-center gap-4 group">
-                    <div class="p-4 bg-indigo-600 rounded-2xl text-white shadow-lg group-active:scale-95 transition-transform">
+                    <div class="p-5 bg-indigo-600 rounded-2xl text-white shadow-xl group-active:scale-95 transition-transform">
                         <i data-lucide="camera" class="w-12 h-12"></i>
                     </div>
                     <span class="text-lg font-bold text-indigo-900">カメラで撮影</span>
                 </button>
 
                 <button id="btn-file" class="w-full p-8 rounded-3xl bg-slate-50 border-2 border-slate-100 hover:border-slate-300 transition-all flex flex-col items-center gap-4 group">
-                    <div class="p-4 bg-slate-600 rounded-2xl text-white shadow-lg group-active:scale-95 transition-transform">
+                    <div class="p-5 bg-slate-600 rounded-2xl text-white shadow-xl group-active:scale-95 transition-transform">
                         <i data-lucide="image" class="w-12 h-12"></i>
                     </div>
                     <span class="text-lg font-bold text-slate-900">画像を選択</span>
                 </button>
                 
-                <footer class="mt-8 text-center pb-8">
-                    <p class="text-[10px] text-slate-300 font-medium tracking-widest uppercase">Created with Photo Moments</p>
+                <footer class="mt-8 text-center pb-8 opacity-40">
+                    <p class="text-[10px] text-slate-400 font-medium tracking-widest uppercase">Created with Photo Moments</p>
                 </footer>
             </section>
 
             <!-- ステージ: 編集 -->
             <section id="stage-edit" class="hidden flex flex-col p-6 space-y-6 fade-in pb-48">
-                <div class="preview-image-box flex items-center justify-center shadow-sm">
+                <div class="preview-image-box flex items-center justify-center shadow-md">
                     <img id="img-edit-preview" src="" alt="preview" class="w-full h-full object-contain">
                 </div>
 
@@ -189,28 +199,26 @@
             </section>
 
             <!-- ステージ: プレビュー -->
-            <section id="stage-preview" class="hidden flex flex-col p-6 space-y-8 fade-in pb-56">
-                <div class="relative group">
-                    <div class="rounded-3xl overflow-hidden shadow-2xl border border-slate-200 bg-white transform-gpu">
+            <section id="stage-preview" class="hidden flex flex-col p-6 space-y-8 fade-in pb-64">
+                <div class="relative">
+                    <div class="rounded-3xl overflow-hidden shadow-2xl border border-slate-100 bg-white">
                         <img id="img-final-result" src="" alt="Final Result" class="w-full h-auto">
                     </div>
-                    <!-- ファイルサイズ表示バッジ -->
-                    <div class="mt-4 flex flex-col items-center gap-2">
-                        <span id="info-file-size" class="px-4 py-1.5 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full border border-indigo-100 flex items-center gap-2">
+                    <div class="mt-6 flex flex-col items-center gap-2">
+                        <span id="info-file-size" class="px-5 py-2 bg-indigo-50 text-indigo-700 text-xs font-bold rounded-full border border-indigo-100 flex items-center gap-2 shadow-sm">
                             <span class="px-1.5 py-0.5 bg-indigo-600 text-white rounded text-[10px]">JPEG</span>
-                            約 -- MB (軽量化済み)
+                            約 -- MB (高画質)
                         </span>
                         <p id="info-png-estimate" class="text-[10px] text-slate-400 font-medium">
                             ※PNG形式の場合、約 -- MB になります
                         </p>
                     </div>
                 </div>
-                <div class="h-4"></div>
             </section>
 
         </main>
 
-        <!-- 編集画面用アクションバー -->
+        <!-- アクションバー -->
         <div id="bar-edit" class="fixed-action-bar hidden">
             <button id="btn-generate-preview" class="w-full py-4 bg-indigo-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-indigo-200 active:scale-95 transition-all">
                 <i data-lucide="check" class="w-6 h-6"></i>
@@ -218,25 +226,24 @@
             </button>
         </div>
 
-        <!-- プレビュー画面用アクションバー -->
         <div id="bar-preview" class="fixed-action-bar hidden space-y-4">
             <div class="grid grid-cols-2 gap-4">
-                <div class="flex flex-col gap-1">
+                <div class="flex flex-col gap-1.5">
                     <button id="btn-copy" class="flex items-center justify-center gap-2 py-4 bg-slate-100 text-slate-800 rounded-2xl font-bold active:scale-95 transition-all">
                         <i data-lucide="copy" class="w-5 h-5"></i>
                         コピー (PNG)
                     </button>
-                    <p class="text-[9px] text-center text-slate-400 font-medium">互換性重視・大容量</p>
+                    <p class="text-[9px] text-center text-slate-400 font-medium leading-tight">高互換・保存も実行</p>
                 </div>
-                <div class="flex flex-col gap-1">
+                <div class="flex flex-col gap-1.5">
                     <button id="btn-share" class="flex items-center justify-center gap-2 py-4 bg-indigo-600 text-white rounded-2xl font-bold shadow-lg shadow-indigo-200 active:scale-95 transition-all">
                         <i data-lucide="share-2" class="w-5 h-5"></i>
                         保存・共有 (JPEG)
                     </button>
-                    <p class="text-[9px] text-center text-indigo-400 font-medium">高画質・ファイル軽量</p>
+                    <p class="text-[9px] text-center text-indigo-500 font-medium leading-tight">高画質・軽量保存</p>
                 </div>
             </div>
-            <button id="btn-back-to-edit" class="w-full flex items-center justify-center gap-2 py-2 text-slate-400 font-medium active:text-slate-800 transition-colors">
+            <button id="btn-back-to-edit" class="w-full flex items-center justify-center gap-2 py-2 text-slate-400 font-semibold active:text-slate-800 transition-colors">
                 <i data-lucide="arrow-left" class="w-4 h-4"></i>
                 編集に戻る
             </button>
@@ -337,12 +344,13 @@
         }
 
         async function generateCard() {
-            const ctx = dom.canvas.getContext('2d');
+            const ctx = dom.canvas.getContext('2d', { alpha: false }); 
             const img = new Image();
             img.src = state.imageSrc;
             await new Promise(res => img.onload = res);
             
-            const MAX_WIDTH = 2048;
+            // 最適解像度: 3072から2560へ微調整
+            const MAX_WIDTH = 2560;
             let canvasWidth = img.naturalWidth;
             let canvasHeightRaw = img.naturalHeight;
             
@@ -360,7 +368,7 @@
                 ctx.drawImage(img, 0, 0, canvasWidth, canvasHeightRaw);
             } else {
                 const lines = dom.txtComment.value.split('\n');
-                const fontSize = Math.max(20, Math.round(canvasWidth * 0.035));
+                const fontSize = Math.max(24, Math.round(canvasWidth * 0.035)); 
                 const lineHeight = Math.round(fontSize * 1.5);
                 const paddingVertical = Math.round(fontSize * 2);
                 
@@ -384,25 +392,31 @@
                 });
             }
             
-            // JPEGで書き出し
-            state.processedImageSrc = dom.canvas.toDataURL('image/jpeg', 0.85);
+            // 圧縮率調整: 0.92から0.90へ微調整
+            state.processedImageSrc = dom.canvas.toDataURL('image/jpeg', 0.90);
             
-            // サイズ計算
             const head = 'data:image/jpeg;base64,';
             const sizeInBytes = Math.round((state.processedImageSrc.length - head.length) * 3 / 4);
             const sizeInMB = (sizeInBytes / (1024 * 1024)).toFixed(2);
-            
-            // 推定PNGサイズの計算 (約8倍)
-            const pngEstimate = (parseFloat(sizeInMB) * 8).toFixed(1);
+            const pngEstimate = (parseFloat(sizeInMB) * 10).toFixed(1);
             
             dom.infoFileSize.innerHTML = `
                 <span class="px-1.5 py-0.5 bg-indigo-600 text-white rounded text-[10px]">JPEG</span>
-                約 ${sizeInMB} MB (軽量化済み)
+                約 ${sizeInMB} MB (高画質)
             `;
             dom.infoPngEstimate.textContent = `※PNG形式の場合、約 ${pngEstimate} MB になります`;
             
             state.stage = 'PREVIEW';
             updateUI();
+        }
+
+        function downloadDataUrl(dataUrl, filename) {
+            const a = document.createElement('a');
+            a.href = dataUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
         }
 
         dom.btnCamera.onclick = () => dom.cameraInput.click();
@@ -427,33 +441,38 @@
                 
                 tempCanvas.toBlob(async (blob) => {
                     if (!blob) throw new Error("Blob creation failed");
+                    
                     try {
                         await navigator.clipboard.write([
                             new ClipboardItem({ 'image/png': blob })
                         ]);
-                        alert("PNG形式でクリップボードにコピーしました");
                     } catch (err) {
-                        console.error(err);
-                        alert("コピーに失敗しました。画像を長押しして保存してください。");
+                        console.warn("Clipboard failed", err);
                     }
+
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        downloadDataUrl(reader.result, `moments-copy-${Date.now()}.png`);
+                        alert("クリップボードにコピーし、ローカルにもPNGとして保存しました");
+                    };
+                    reader.readAsDataURL(blob);
                 }, 'image/png');
-            } catch (e) { alert("コピーに失敗しました。"); }
+            } catch (e) { alert("コピーに失敗しました"); }
         };
 
         dom.btnShare.onclick = async () => {
             try {
+                downloadDataUrl(state.processedImageSrc, `moments-${Date.now()}.jpg`);
                 const response = await fetch(state.processedImageSrc);
                 const blob = await response.blob();
                 const file = new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
+                
                 if (navigator.share && navigator.canShare({ files: [file] })) {
                     await navigator.share({ files: [file], title: 'Photo Moments' });
                 } else {
-                    const a = document.createElement('a');
-                    a.href = state.processedImageSrc;
-                    a.download = file.name;
-                    a.click();
+                    alert("JPEG形式でローカルに保存しました");
                 }
-            } catch (e) { alert("保存・共有に失敗しました"); }
+            } catch (e) { alert("保存に失敗しました"); }
         };
 
         dom.btnUndo.onclick = () => {
@@ -474,7 +493,7 @@
         let t;
         dom.txtComment.oninput = () => {
             clearTimeout(t);
-            t = setTimeout(pushToHistory, 500);
+            t = setTimeout(pushToHistory, 400); 
         };
 
         updateUI();
